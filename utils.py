@@ -66,6 +66,22 @@ def phi3d(ax,ay,az, bx,by,bz ,cx,cy,cz):
     return p, t
 
 
+# Add points in a path
+def over_sampling(path, max_length=5):
+    new = []
+    for i in range(len(path) - 1):
+        a, b = path[i], path[i+1]
+        new.append(a)
+        last = a
+        norm = dist(a, b)
+        dir_x = (b[0]-a[0]) * max_length / norm
+        dir_y = (b[1]-a[1]) * max_length / norm
+        while dist(last, b) > max_length * max_length:
+            last = [last[0] + dir_x, last[1] + dir_y]
+            new.append(last)
+    new.append(path[-1])
+    return new
+
 # Return the list of corner coordinates for all block cells
 def corners(cells):
     pts = set()
