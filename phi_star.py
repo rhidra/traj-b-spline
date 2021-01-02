@@ -87,9 +87,6 @@ def find_path(start, goal, grid, obs, openset=set(), closedset=set()):
             
             showPath2 = updateVertex(current, node, grid, obs)
 
-        if DISPLAY and i % DISPLAY_FREQ == 0:
-            plot.display(start, goal, grid, obs, nodes=openset.union(closedset), point=current, point2=node, showPath2=showPath2)
-
     if not goal.parent:
         print('  No path found !')
         raise NoPathFound
@@ -130,11 +127,6 @@ def clearSubtree(node, grid, obs, openset, closedset):
 
 
 def phi_star(start, goal, grid_obs, newBlockedCells=[]):
-    print('  Computing Phi* algorithm...')
-    durations = []
-    lengths = []
-    paths = []
-
     x, y = np.mgrid[0:grid_obs.shape[0]+1, 0:grid_obs.shape[1]+1]
     grid = np.vectorize(Node)(x, y)
     start, goal = grid[start], grid[goal]
@@ -144,43 +136,8 @@ def phi_star(start, goal, grid_obs, newBlockedCells=[]):
     openset = set()
     closedset = set()
 
-    t1 = time.time()
-    duration = 0
-
-    i = 0
-    while True:
-        print('  Planning #{}'.format(i))
-        i += 1
-        path = find_path(start, goal, grid, grid_obs, openset, closedset)
-        
-        if not DISPLAY:
-            duration = abs(time.time() - t1)
-        durations.append(duration)
-        lengths.append(pathLength(path))
-        paths.append(list(map(lambda n: n.pos, path)))
-
-        if DISPLAY_END:
-            plot.display(start, goal, grid, grid_obs, nodes=openset.union(closedset), path=path)
-
-        if not REPLANNING:
-            break
-        
-
-        if DISPLAY_END and WAIT_INPUT:
-            blockedCells = plot.waitForInput(grid_obs, lambda: plot.display(start, goal, grid, grid_obs))
-        else:
-            try:
-                blockedCells = next(newBlockedCells)
-                updateGridBlockedCells(blockedCells, grid_obs)
-            except StopIteration:
-                break
-              
-        t1 = time.time()
-
-        for pt in corners(blockedCells):
-            if (grid[pt] in openset or grid[pt] in closedset) and grid[pt] != start:
-                clearSubtree(grid[pt], grid, grid_obs, openset, closedset)
-    return path, openset.union(closedset), np.array(durations), np.array(lengths), paths
+    path = find_path(start, goal, grid, grid_obs, openset, closedset)
+    return path
 
 
 def main():
@@ -193,7 +150,7 @@ def main():
     grid_obs[grid_obs <= OBSTACLE_THRESHOLD] = Node.FREE
     grid_obs[start], grid_obs[goal[0]-1, goal[1]-1] = Node.FREE, Node.FREE
     
-    return phi_star(start, goal, grid_obs)
+    return phi_star(start, goal, grid_obs), grid_obs, start, goal
 
 
 if __name__ == '__main__':

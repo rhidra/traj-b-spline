@@ -4,42 +4,17 @@ from config import DISPLAY_DELAY
 
 fig, ax = plt.subplots()
 
-def display(start=None, goal=None, grid=[], grid_obs=[], path=[], nodes=[], point=None, point2=None, showPath2=True, hold=False):
+def display(start=None, goal=None, grid_obs=[], path=[], smooth_path=[], point=None, point2=None, hold=False):
     print('  Plotting...')
     ax.clear()
-    if len(grid) != 0:
-        ax.set_xlim(-0.5, grid.shape[0])
-        ax.set_ylim(-0.5, grid.shape[1])
-    elif len(grid_obs) != 0:
-        ax.set_xlim(-0.5, grid_obs.shape[0])
-        ax.set_ylim(-0.5, grid_obs.shape[0])
+    ax.set_xlim(-0.5, grid_obs.shape[0])
+    ax.set_ylim(-0.5, grid_obs.shape[0])
 
-    if len(grid_obs) != 0:
-        obs = []
-        x, y = np.mgrid[0:grid_obs.shape[0], 0:grid_obs.shape[1]]
-        np.vectorize(lambda node, x, y: obs.append(patches.Rectangle([x, y], 1, 1)) if node == Node.OBSTACLE else None)(grid_obs, x, y)
-        # obs = [patches.Rectangle([x, y], w, h) for x, y, w, h in extractRect(grid_obs)]
-        ax.add_collection(collections.PatchCollection(obs))
-
-    lines = []
-    for node in nodes:
-        pt_list = []
-        while node.local:
-            pt_list.append([node.pos[0], node.pos[1]])            
-            node = node.local
-        pt_list.append([node.pos[0], node.pos[1]])
-        lines.append(pt_list)
-    ax.add_collection(collections.LineCollection(lines, colors='green', alpha=1 if len(path) == 0 else .5))
-
-    lines = []
-    for node in nodes:
-        pt_list = []
-        while node.parent:
-            pt_list.append([node.pos[0], node.pos[1]])            
-            node = node.parent
-        pt_list.append([node.pos[0], node.pos[1]])
-        lines.append(pt_list)
-    ax.add_collection(collections.LineCollection(lines, colors='red', alpha=1 if len(path) == 0 else .5))
+    obs = []
+    x, y = np.mgrid[0:grid_obs.shape[0], 0:grid_obs.shape[1]]
+    np.vectorize(lambda node, x, y: obs.append(patches.Rectangle([x, y], 1, 1)) if node == Node.OBSTACLE else None)(grid_obs, x, y)
+    # obs = [patches.Rectangle([x, y], w, h) for x, y, w, h in extractRect(grid_obs)]
+    ax.add_collection(collections.PatchCollection(obs))
 
     if start is not None:
         ax.add_patch(patches.Circle(start.pos if isinstance(start, Node) else start, .3, linewidth=1, facecolor='green'))
@@ -50,23 +25,6 @@ def display(start=None, goal=None, grid=[], grid_obs=[], path=[], nodes=[], poin
     if point2:
         ax.add_patch(patches.Circle(point2.pos, .2, linewidth=1, facecolor='magenta'))
     
-    if point and point2 and lineOfSightNeighbors(point.pos, point2.pos, grid_obs):
-        ax.add_patch(patches.Arrow(point.pos[0], point.pos[1], point2.pos[0]-point.pos[0], point2.pos[1]-point.pos[1], .4, facecolor='red'))
-    
-    if point and point2 and point.parent and lineOfSight(point.parent, point2, grid_obs) and showPath2:
-        ax.add_patch(patches.Arrow(point.parent.pos[0], point.parent.pos[1], point2.pos[0]-point.parent.pos[0], point2.pos[1]-point.parent.pos[1], .3, facecolor='magenta'))
-    
-    if point and point2 and point.parent:
-        rect = []
-        for pt in supercover(point.parent, point2):
-            rect.append(patches.Rectangle([pt[0], pt[1]], 1, 1, facecolor='black', alpha=.1))
-        ax.add_collection(collections.PatchCollection(rect, match_original=True))
-    
-    if point and point.parent and showPath2:
-        mid_angle = phi([point.parent.pos[0]+1, point.parent.pos[1]], point.parent, point)
-        ax.add_patch(patches.Wedge(point.parent.pos, 5, mid_angle + point.lb, mid_angle + point.ub, facecolor='cyan', alpha=.3))
-
-        
     if len(path) > 0 and isinstance(path[0], Node):
         local = []
         node = path[-1]
@@ -87,7 +45,11 @@ def display(start=None, goal=None, grid=[], grid_obs=[], path=[], nodes=[], poin
         ax.add_collection(collections.PatchCollection([patches.Rectangle([p[0], p[1]], 1, 1, linewidth=1, facecolor='orange', alpha=.5) for p in pts], match_original=True))
 
     elif len(path) > 0:
-        plt.plot(path[:, 0], path[:, 1], 'o-', color='red', linewidth=1)
+        plt.plot(path[:, 0], path[:, 1], 'x-', color='red', linewidth=.3, alpha=.6)
+
+    if len(smooth_path) > 0:
+        plt.plot(smooth_path[:, 0], smooth_path[:, 1], 'o-', color='magenta', linewidth=2)
+
 
     plt.title('Processing...')
     if hold and isinstance(hold, bool):
