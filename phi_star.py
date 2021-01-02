@@ -193,7 +193,7 @@ def main():
     grid_obs[grid_obs <= OBSTACLE_THRESHOLD] = Node.FREE
     grid_obs[start], grid_obs[goal[0]-1, goal[1]-1] = Node.FREE, Node.FREE
     
-    phi_star(start, goal, grid_obs)
+    return phi_star(start, goal, grid_obs)
 
 
 if __name__ == '__main__':
