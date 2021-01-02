@@ -4,7 +4,7 @@ def getPos(node):
     return node.pos if isinstance(node, Node) else node
 
 def dist(p1, p2, sqrt=True):
-    if p1 == None or p2 == None:
+    if p1 is None or p2 is None:
         return math.inf
     p1, p2 = getPos(p1), getPos(p2)
     sqr = (p1[0] - p2[0])**2 + (p1[1]-p2[1])**2
