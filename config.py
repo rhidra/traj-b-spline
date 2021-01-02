@@ -10,15 +10,15 @@ OBSTACLE_Y_SIZE = 4
 OBSTACLE_X_OFFSET = 0
 OBSTACLE_Y_OFFSET = 0
 
-# Real time display of the algorithm
-DISPLAY = True
+# Real time display of the path planning algorithm
+DISPLAY = False
 DISPLAY_DELAY = .1
 DISPLAY_FREQ = 1
 DISPLAY_END = True # Should display for a few seconds at the end of the algorithm (before auto replanning)
 WAIT_INPUT = DISPLAY_END and True
 
 # Allow replanning, through user input or programmatically
-REPLANNING = True
+REPLANNING = False
 
 # For automatic blocked cell generation
 BLOCKED_CELLS = 20 # Number of newly blocked cell in one loop 
