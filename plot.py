@@ -45,10 +45,10 @@ def display(start=None, goal=None, grid_obs=[], path=[], smooth_path=[], point=N
         ax.add_collection(collections.PatchCollection([patches.Rectangle([p[0], p[1]], 1, 1, linewidth=1, facecolor='orange', alpha=.5) for p in pts], match_original=True))
 
     elif len(path) > 0:
-        plt.plot(path[:, 0], path[:, 1], 'x-', color='red', linewidth=.3, alpha=.6)
+        plt.plot(path[:, 0], path[:, 1], 'o', color='red', markersize=8)
 
     if len(smooth_path) > 0:
-        plt.plot(smooth_path[:, 0], smooth_path[:, 1], 'o-', color='magenta', linewidth=2)
+        plt.plot(smooth_path[:, 0], smooth_path[:, 1], '-', color='magenta', linewidth=.8)
 
 
     plt.title('Processing...')
