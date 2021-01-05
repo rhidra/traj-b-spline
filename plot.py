@@ -1,14 +1,22 @@
 import numpy as np, matplotlib.pyplot as plt, matplotlib.patches as patches, matplotlib.collections as collections
 from utils import supercover, Node, lineOfSightNeighbors, lineOfSight, dist, phi
 from config import DISPLAY_DELAY
+from bspline import bsplineUpsample
+from trajectory import OPTIMIZED_POINTS
 
-fig, ax = plt.subplots()
+fig, (ax, ax2) = plt.subplots(nrows=2)
 
-def display(start=None, goal=None, grid_obs=[], path=[], smooth_path=[], point=None, point2=None, hold=False):
-    print('  Plotting...')
+getPos = lambda x: x.pos if isinstance(x, Node) else x
+
+# originalPath: path coming from the global planner
+# smoothPath: path after trajectory optimization
+def display(start=None, goal=None, grid_obs=[], originalPath=[], optimPath=[], losses=[], currentOptimIdx=None, hold=False):
     ax.clear()
     ax.set_xlim(-0.5, grid_obs.shape[0])
     ax.set_ylim(-0.5, grid_obs.shape[0])
+    
+    ax.set_title('Trajectory')
+    ax2.set_title('Loss function')
 
     obs = []
     x, y = np.mgrid[0:grid_obs.shape[0], 0:grid_obs.shape[1]]
@@ -17,46 +25,34 @@ def display(start=None, goal=None, grid_obs=[], path=[], smooth_path=[], point=N
     ax.add_collection(collections.PatchCollection(obs))
 
     if start is not None:
-        ax.add_patch(patches.Circle(start.pos if isinstance(start, Node) else start, .3, linewidth=1, facecolor='green'))
+        ax.add_patch(patches.Circle(getPos(start), .3, linewidth=1, facecolor='green'))
     if goal is not None:
-        ax.add_patch(patches.Circle(goal.pos if isinstance(goal, Node) else goal, .3, linewidth=1, facecolor='blue'))
-    if point:
-        ax.add_patch(patches.Circle(point.pos, .3, linewidth=1, facecolor='red'))
-    if point2:
-        ax.add_patch(patches.Circle(point2.pos, .2, linewidth=1, facecolor='magenta'))
+        ax.add_patch(patches.Circle(getPos(goal), .3, linewidth=1, facecolor='blue'))
     
-    if len(path) > 0 and isinstance(path[0], Node):
-        local = []
-        node = path[-1]
-        while node.local:
-            local.append(node.pos)
-            node = node.local
-        local.append(node.pos)
-        local = np.array(local)
-        path_ = np.array([p.pos for p in path])
-        plt.plot(local[:, 0], local[:, 1], color='green', linewidth=3)
-        plt.plot(path_[:, 0], path_[:, 1], color='red', linewidth=4)
+    if len(originalPath) > 0:
+        smoothed = bsplineUpsample(originalPath)
+        ax.plot(originalPath[:, 0], originalPath[:, 1], 'x', color='red', markersize=5)
+        ax.plot(smoothed[:, 0], smoothed[:, 1], '-', color='red', linewidth=.8)
+        if currentOptimIdx is not None:
+            ax.plot(originalPath[currentOptimIdx:currentOptimIdx+OPTIMIZED_POINTS, 0], originalPath[currentOptimIdx:currentOptimIdx+OPTIMIZED_POINTS, 1], 'x', color='green', markersize=5)
 
-        pts = []
-        node = path[-1]
-        while node.parent:
-            pts += supercover(node, node.parent)
-            node = node.parent
-        ax.add_collection(collections.PatchCollection([patches.Rectangle([p[0], p[1]], 1, 1, linewidth=1, facecolor='orange', alpha=.5) for p in pts], match_original=True))
+    if len(optimPath) > 0:
+        smoothed = bsplineUpsample(optimPath)
+        ax.plot(optimPath[:, 0], optimPath[:, 1], 'o', color='magenta', markersize=5)
+        ax.plot(smoothed[:, 0], smoothed[:, 1], '-', color='magenta', linewidth=.8)
+        if currentOptimIdx is not None:
+            ax.plot(optimPath[currentOptimIdx:currentOptimIdx+OPTIMIZED_POINTS, 0], optimPath[currentOptimIdx:currentOptimIdx+OPTIMIZED_POINTS, 1], 'o', color='green', markersize=5)
 
-    elif len(path) > 0:
-        plt.plot(path[:, 0], path[:, 1], 'o', color='red', markersize=8)
+    if len(losses) > 0:
+        ax2.clear()
+        for loss in losses:
+            ax2.plot(loss)
+        # ax2.set_ylim([0, loss[0] + 10])
 
-    if len(smooth_path) > 0:
-        plt.plot(smooth_path[:, 0], smooth_path[:, 1], '-', color='magenta', linewidth=.8)
-
-
-    plt.title('Processing...')
     if hold and isinstance(hold, bool):
         plt.show()
     else:
         plt.pause(DISPLAY_DELAY if isinstance(hold, bool) else hold)
-    print('End plot')
 
 
 def extractRect(grid):

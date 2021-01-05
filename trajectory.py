@@ -1,17 +1,9 @@
 import math, sys, time, matplotlib.pyplot as plt, plot, nlopt, autograd.numpy as np, autograd
 from phi_star import main as phi_star_gen
 from utils import dist, over_sampling, Node
+from bspline import M_6, bspline, bsplineAcc, bsplineVel, bsplineJerk, bsplineSnap, bsplineUpsample
 from config import *
 
-M_6 = (1 / math.factorial(5)) * np.array([[1,26,66,26,1,0], [-5,-50,0,50,5,0], [10,20,-60,20,10,0], [-10,20,0,-20,10,0], [5,-20,30,-20,5,0], [-1,5,-10,10,-5,1]])
-
-# For the quadratic cost computation (E_q)
-Q_2 = lambda dt: np.array([[0]*6,[0]*6, [0,0,4,6,8,10], [0,0,6,12,18,24], [0,0,8,18,28.8,40], [0,0,10,24,40,400/7]]) / (dt*dt*dt)
-Q_3 = lambda dt: np.array([[0]*6,[0]*6,[0]*6, [0,0,0,36,72,120], [0,0,0,72,192,360], [0,0,0,120,360,720]]) / (dt*dt*dt*dt*dt)
-Q_4 = lambda dt: np.array([[0]*6,[0]*6,[0]*6,[0]*6, [0,0,0,0,576,1440], [0,0,0,0,1440,4800]]) / (dt*dt*dt*dt*dt*dt*dt)
-
-# NUmber of points sampled from a single segment in a B-spline
-UPSAMPLE_SCALE = 5
 
 # Number of points being optimized at the same time
 OPTIMIZED_POINTS = 3
@@ -19,32 +11,23 @@ OPTIMIZED_POINTS = 3
 # Teta in the distance function in the paper
 OBSTACLE_DISTANCE_THRESHOLD = 5
 
+# Initial offset in the path when the optimization starts
+INITIAL_OPTIM_OFFSET = 6
+
 # Objective function parameters
 lambda_p, lambda_v = 1, 1 # Endpoint cost position and velocity weights
 lambda_c = 1 # Collision cost weight
 
-U_1 = lambda u: np.array([1, u, u*u, u*u*u, u*u*u*u, u*u*u*u*u]).reshape(1,6)
-U_2 = lambda u: np.array([0, 1, 2*u, 3*u*u, 4*u*u*u, 5*u*u*u*u]).reshape(1,6)
-U_3 = lambda u: np.array([0, 0, 2, 6*u, 12*u*u, 20*u*u*u]).reshape(1,6)
-U_4 = lambda u: np.array([0, 0, 0, 6, 24*u, 60*u*u])
-U_5 = lambda u: np.array([0, 0, 0, 0, 24, 120*u])
+# For the quadratic cost computation (E_q)
+Q_2 = lambda dt: np.array([[0]*6,[0]*6, [0,0,4,6,8,10], [0,0,6,12,18,24], [0,0,8,18,28.8,40], [0,0,10,24,40,400/7]]) / (dt*dt*dt)
+Q_3 = lambda dt: np.array([[0]*6,[0]*6,[0]*6, [0,0,0,36,72,120], [0,0,0,72,192,360], [0,0,0,120,360,720]]) / (dt*dt*dt*dt*dt)
+Q_4 = lambda dt: np.array([[0]*6,[0]*6,[0]*6,[0]*6, [0,0,0,0,576,1440], [0,0,0,0,1440,4800]]) / (dt*dt*dt*dt*dt*dt*dt)
 
-bspline = lambda u, pts: U_1(u).dot(M_6).dot(pts).reshape(-1)
-bsplineVel = lambda u, pts, delta_t: (1/delta_t) * np.dot(np.dot(U_2(u), M_6), pts).reshape(-1)
-bsplineAcc = lambda u, pts, delta_t: (1/delta_t/delta_t) * np.dot(np.dot(U_3(u), M_6), pts).reshape(-1)
-bsplineJerk = lambda u, pts, delta_t: (1/delta_t/delta_t/delta_t) * np.dot(np.dot(U_4(u), M_6), pts).reshape(-1)
-bsplineSnap = lambda u, pts, delta_t: (1/delta_t/delta_t/delta_t/delta_t) * np.dot(np.dot(U_5(u), M_6), pts).reshape(-1)
-
-gradPts = lambda i: np.array([0]*i + [1] + [0]*(6*2-i-1)).reshape(6, 2)
-gradBspline = lambda i, u: U_1(u).dot(M_6).dot(gradPts(i))
-gradBsplineVel = lambda i, u, delta_t: U_2(u).dot(M_6).dot(gradPts(i)) /delta_t
-gradBsplineAcc = lambda i, u, delta_t: U_3(u).dot(M_6).dot(gradPts(i)) /delta_t/delta_t
-gradBsplineJerk = lambda i, u, delta_t: U_4(u).dot(M_6).dot(gradPts(i)) /delta_t/delta_t/delta_t
-gradBsplineSnap = lambda i, u, delta_t: U_5(u).dot(M_6).dot(gradPts(i)) /delta_t/delta_t/delta_t/delta_t
 
 # Extract 6 points centered around idx according to the P_i = [pi-2, pi-1, pi, pi+1, pi+2, pi+3] vector from the paper
 def extractPts(pts, idx):
     return pts[np.int(idx) - 2:np.int(idx) + 4]
+
 
 def norm(x):
     return np.sqrt(np.dot(x.T, x))
@@ -129,12 +112,12 @@ def cost(pts, globalPts, startIdx, distObs, delta_t):
     return E
 
 
-def optimTrajectory(path, distObs, trajDuration):
+def optimTrajectory(path, distObs, grid_obs, trajDuration):
     path = np.pad(path, ((0, 6), (0, 0)), mode='edge')
     optim = np.copy(path)
     delta_t = trajDuration / len(path)
     # For each iteration, we optimize between [startOptim, startOptim + OPTIMIZED_POINTS]
-    startOptim = 6
+    startOptim = INITIAL_OPTIM_OFFSET
 
     # NLopt configuration
     def objFun(optim, globalPath, startOptim, distObs, delta_t):
@@ -144,40 +127,27 @@ def optimTrajectory(path, distObs, trajDuration):
         gradE = autograd.grad(E)
         return E, gradE
 
+    epochs = 20
+
+    losses = np.zeros((epochs, len(path) - 6 - startOptim - OPTIMIZED_POINTS))
     while startOptim + OPTIMIZED_POINTS <= len(path) - 6:
         f, df = objFun(optim, path, startOptim, distObs, delta_t)
         x = optim[startOptim:startOptim+OPTIMIZED_POINTS].reshape(-1)
 
-        epochs = 50
         beta = .9 # Momentum optimization param
         lr = 1e-6
-        loss = np.zeros(epochs)
         v = 0
         for i in range(epochs):
-            loss[i] = f(x)
+            losses[startOptim-INITIAL_OPTIM_OFFSET, i] = f(x)
             dx = df(x)
             v = beta * v + (1 - beta) * dx
             x = x - lr * v
-            print('[{}] loss: {} | grad: {}'.format(i, loss[i], dx))
-        optim[startOptim:startOptim+OPTIMIZED_POINTS, :] = x.reshape(-1, 2)
-
-        plt.plot(loss)
-        plt.ylim([0, loss[0] + 10])
-        plt.show()
+            print('[{}] loss: {} | grad: {}'.format(i, losses[startOptim-INITIAL_OPTIM_OFFSET, i], dx))
+            if i%3==0:
+                optim[startOptim:startOptim+OPTIMIZED_POINTS, :] = x.reshape(-1, 2)
+                plot.display(None, None, grid_obs, path, optim, losses, startOptim, hold=1)
         startOptim += 1
     return optim
-
-
-def bsplineUpsample(path):
-    smoothed = np.zeros((len(path) * UPSAMPLE_SCALE, 2))
-
-    for i in range(len(path)):
-        p = np.array([path[np.clip(i + j - 2, 0, len(path)-1)] for j in range(6)]).reshape(6, 2)
-
-        for uidx, u in enumerate(np.linspace(0, 1, UPSAMPLE_SCALE)):
-            smoothed[i * UPSAMPLE_SCALE + uidx, :] = bspline(u, p)
-
-    return smoothed
 
 
 def main():
@@ -190,14 +160,12 @@ def main():
 
     distObs = euclideanDistanceTransform(grid_obs)
 
-    pathOptimized = optimTrajectory(path, distObs, trajDuration=10)
+    pathOptimized = optimTrajectory(path, distObs, grid_obs, trajDuration=10)
 
     print(path, pathOptimized)
 
     smoothed = bsplineUpsample(pathOptimized)
 
-    plot.display(start, goal, grid_obs, path, smoothed, hold=True)
     
-
 if __name__ == '__main__':
     main()
