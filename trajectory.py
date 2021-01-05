@@ -1,5 +1,4 @@
-import math, sys, time, matplotlib.pyplot as plt, plot, nlopt
-from autograd import numpy as np, grad as autograd_grad
+import math, sys, time, matplotlib.pyplot as plt, plot, nlopt, autograd.numpy as np, autograd
 from phi_star import main as phi_star_gen
 from utils import dist, over_sampling, Node
 from config import *
@@ -31,10 +30,10 @@ U_4 = lambda u: np.array([0, 0, 0, 6, 24*u, 60*u*u])
 U_5 = lambda u: np.array([0, 0, 0, 0, 24, 120*u])
 
 bspline = lambda u, pts: U_1(u).dot(M_6).dot(pts).reshape(-1)
-bsplineVel = lambda u, pts, delta_t: (1/delta_t) * U_2(u).dot(M_6).dot(pts).reshape(-1)
-bsplineAcc = lambda u, pts, delta_t: (1/delta_t/delta_t) * U_3(u).dot(M_6).dot(pts).reshape(-1)
-bsplineJerk = lambda u, pts, delta_t: (1/delta_t/delta_t/delta_t) * U_4(u).reshape(1,6).dot(M_6).dot(pts).reshape(-1)
-bsplineSnap = lambda u, pts, delta_t: (1/delta_t/delta_t/delta_t/delta_t) * U_5(u).reshape(1,6).dot(M_6).dot(pts).reshape(-1)
+bsplineVel = lambda u, pts, delta_t: (1/delta_t) * np.dot(np.dot(U_2(u), M_6), pts).reshape(-1)
+bsplineAcc = lambda u, pts, delta_t: (1/delta_t/delta_t) * np.dot(np.dot(U_3(u), M_6), pts).reshape(-1)
+bsplineJerk = lambda u, pts, delta_t: (1/delta_t/delta_t/delta_t) * np.dot(np.dot(U_4(u), M_6), pts).reshape(-1)
+bsplineSnap = lambda u, pts, delta_t: (1/delta_t/delta_t/delta_t/delta_t) * np.dot(np.dot(U_5(u), M_6), pts).reshape(-1)
 
 gradPts = lambda i: np.array([0]*i + [1] + [0]*(6*2-i-1)).reshape(6, 2)
 gradBspline = lambda i, u: U_1(u).dot(M_6).dot(gradPts(i))
@@ -45,8 +44,10 @@ gradBsplineSnap = lambda i, u, delta_t: U_5(u).dot(M_6).dot(gradPts(i)) /delta_t
 
 # Extract 6 points centered around idx according to the P_i = [pi-2, pi-1, pi, pi+1, pi+2, pi+3] vector from the paper
 def extractPts(pts, idx):
-    assert pts.shape[1] == 2
-    return pts[int(idx) - 2:int(idx) + 4]
+    return pts[np.int(idx) - 2:np.int(idx) + 4]
+
+def norm(x):
+    return np.sqrt(np.dot(x.T, x))
 
 
 def euclideanDistanceTransform(grid_obs):
@@ -73,17 +74,24 @@ def cost(pts, globalPts, startIdx, distObs, delta_t):
     # Endpoint cost
     posDiff = bspline(0, extractPts(pts, startIdx + 5)) - globalPts[5]
     velDiff = bsplineVel(0, extractPts(pts, startIdx + 5), delta_t) - np.array([1, 1]) # Hardcoded expected velocity
-    E_ep = lambda_p * posDiff.dot(posDiff) + lambda_v * velDiff.dot(velDiff)
+    E_ep = lambda_p * np.dot(posDiff, posDiff) + lambda_v * np.dot(velDiff, velDiff)
 
     # Collision cost
-    u = np.linspace(0, 1, 1000)
+    u = np.linspace(0, 1, 10)
     samples = np.vstack((np.repeat(np.arange(6), len(u)), np.tile(u, 6)))
-    computeDist = lambda sample: distObs[tuple(bspline(sample[1], extractPts(pts, sample[0] + startIdx)).astype(np.int))]
+    
+    def computeDist(sample):
+        p = bspline(sample[1], extractPts(pts, sample[0] + startIdx))
+        return distObs[np.clip(np.int(p[0]), 0, distObs.shape[0]-1), np.clip(np.int(p[1]), 0, distObs.shape[1]-1)]
     distances = np.apply_along_axis(computeDist, 0, samples)
     mask = distances <= OBSTACLE_DISTANCE_THRESHOLD
     distances[mask] = np.square(distances[mask] - OBSTACLE_DISTANCE_THRESHOLD) / (2 * OBSTACLE_DISTANCE_THRESHOLD)
     distances[np.invert(mask)] = 0
-    velocities = np.apply_along_axis(lambda sample: np.linalg.norm(bsplineVel(sample[1], extractPts(pts, sample[0] + startIdx), delta_t)), 0, samples)
+
+    def computeVelocities(sample):
+        p = bsplineVel(sample[1], extractPts(pts, sample[0] + startIdx), delta_t)
+        return norm(p)
+    velocities = np.apply_along_axis(computeVelocities, 0, samples)
     E_c = lambda_c * np.sum(distances.dot(velocities)) / (len(u) * 6)
 
     # Squared derivative cost
@@ -93,7 +101,7 @@ def cost(pts, globalPts, startIdx, distObs, delta_t):
     for i in range(6):
         A = M_6.dot(extractPts(pts, startIdx + i))
         B = A.T
-        E_q += np.sum(lambda_q2 * B.dot(q2).dot(A) + lambda_q3 * B.dot(q3).dot(A) + lambda_q4 * B.dot(q4).dot(A))
+        E_q = E_q + np.sum(lambda_q2 * B.dot(q2).dot(A) + lambda_q3 * B.dot(q3).dot(A) + lambda_q4 * B.dot(q4).dot(A))
     
     # Derivative limit cost
     max_vel, max_acc, max_jerk, max_snap = np.array([1000, 1000]), np.array([1000, 1000]), np.array([1000, 1000]), np.array([10000, 10000])
@@ -102,44 +110,23 @@ def cost(pts, globalPts, startIdx, distObs, delta_t):
     def derivativeCost(pFunc, max_p, delta_t):
         def f(sample):
             p = pFunc(sample[1], extractPts(pts, sample[0] + startIdx), delta_t)
-            return np.exp(p.dot(p) - max_p.dot(max_p)) - 1 if np.linalg.norm(p) > np.linalg.norm(max_p) else 0
+            norm_max = norm(max_p)
+            norm_p = norm(p)
+            return np.exp(norm_p - norm_max) - np.array([1]) if norm_p > norm_max else np.array([0])
         return f
 
-    E_l = np.sum(np.apply_along_axis(derivativeCost(bsplineVel, max_vel, delta_t), 0, samples))
-    E_l += np.sum(np.apply_along_axis(derivativeCost(bsplineAcc, max_acc, delta_t), 0, samples))
-    E_l += np.sum(np.apply_along_axis(derivativeCost(bsplineJerk, max_jerk, delta_t), 0, samples))
-    E_l += np.sum(np.apply_along_axis(derivativeCost(bsplineSnap, max_snap, delta_t), 0, samples))
+    E_l = np.array([0])
+    for sample in zip(samples[0], samples[1]):
+        E_l = E_l + derivativeCost(bsplineVel, max_vel, delta_t)(sample)
+        E_l = E_l + derivativeCost(bsplineAcc, max_acc, delta_t)(sample)
+        E_l = E_l + derivativeCost(bsplineJerk, max_jerk, delta_t)(sample)
+        E_l = E_l + derivativeCost(bsplineSnap, max_snap, delta_t)(sample)
 
     # Total cost
     E = E_ep + E_c + E_q + E_l
 
-    print('{} | {} | {} | {} => {}'.format(E_ep, E_c, E_q, E_l, E))
+    # print('{} | {} | {} | {} => {}'.format(E_ep, E_c, E_q, E_l, E))
     return E
-
-# Similar to cost(), but return the gradient of the objective function
-# each grad[i] contains the partial derivative for each (x, y) coordinate of each optimized point
-def gradCost(pts, globalPts, startIdx, distObs, delta_t):
-    # Endpoint cost gradient
-    posDiff = bspline(0, extractPts(pts, startIdx + 5)) - globalPts[5]
-    velDiff = bsplineVel(0, extractPts(pts, startIdx + 5), delta_t) - np.array([1, 1]) # Hardcoded expected velocity
-    dE_ep = np.zeros(OPTIMIZED_POINTS * 2)
-    for i, pti in enumerate(np.arange(6 - OPTIMIZED_POINTS, 6, .5) * 2):
-        dE_ep[i] = 2 * lambda_p * posDiff.dot(gradBspline(pti, 1)) + 2 * lambda_v * velDiff.dot(gradBsplineVel(pti, 1, delta_t))
-
-    # Collision cost gradient
-    u = np.linspace(0, 1, 10)
-    samples = np.vstack((np.repeat(np.arange(6), len(u)), np.tile(u, 6)))
-    computeDist = lambda sample: distObs[tuple(bspline(sample[1], extractPts(pts, sample[0] + startIdx)).astype(np.int))]
-    distances = np.apply_along_axis(computeDist, 0, samples)
-    mask = distances <= OBSTACLE_DISTANCE_THRESHOLD
-    distances[mask] = np.square(distances[mask] - OBSTACLE_DISTANCE_THRESHOLD) / (2 * OBSTACLE_DISTANCE_THRESHOLD)
-    distances[np.invert(mask)] = 0
-    velocities = np.apply_along_axis(lambda sample: np.linalg.norm(bsplineVel(sample[1], extractPts(pts, sample[0] + startIdx), delta_t)), 0, samples)
-    dE_c = np.zeros(OPTIMIZED_POINTS * 2)
-    for i, pti in enumerate(np.arange(6 - OPTIMIZED_POINTS, 6, .5) * 2):
-        gradBsplineAcc(pti, )
-        # E_c[i] = lambda_c * np.sum(velocities + * distances / (2 * )) / (len(u) * 6)
-
 
 
 def optimTrajectory(path, distObs, trajDuration):
@@ -150,17 +137,33 @@ def optimTrajectory(path, distObs, trajDuration):
     startOptim = 6
 
     # NLopt configuration
-    def objFun(x, grad):
-        if grad.size > 0:
-            # Compute grad
-            pass
-        
-        return x
+    def objFun(optim, globalPath, startOptim, distObs, delta_t):
+        def E(x):
+            inp = np.vstack((optim[:startOptim], x.reshape(OPTIMIZED_POINTS, 2), optim[startOptim+OPTIMIZED_POINTS:]))
+            return cost(inp, globalPath, startOptim - (6 - OPTIMIZED_POINTS), distObs, delta_t)
+        gradE = autograd.grad(E)
+
+        def nloptFun(x, grad):
+            if grad.size > 0:
+                g = gradE(x)
+                grad[:] = g.reshape(-1)
+            output = E(x)
+            return output
+        return nloptFun
 
     while startOptim + OPTIMIZED_POINTS <= len(path) - 6:
-        # opt = nlopt.opt(nlopt.LD_LBFGS, OPTIMIZED_POINTS * 2)
-        # opt.set_min_objective(objFun)
-        c = cost(optim, path, startOptim - (6 - OPTIMIZED_POINTS), distObs, delta_t)
+        opt = nlopt.opt(nlopt.LD_MMA, OPTIMIZED_POINTS * 2)
+        opt.set_min_objective(objFun(optim, path, startOptim, distObs, delta_t))
+        opt.set_upper_bounds(float('inf'))
+        opt.set_lower_bounds(-float('inf'))
+        opt.set_xtol_rel(1e-3)
+        # opt.set_maxeval(10)
+
+        xInit = optim[startOptim:startOptim+OPTIMIZED_POINTS].reshape(-1)
+        print('init:', xInit.shape)
+        xOptim = opt.optimize(xInit)
+        print('optimized:', xOptim)
+        optim[startOptim:startOptim+OPTIMIZED_POINTS, :] = xOptim.reshape(-1, 2)
         startOptim += 1
 
 
