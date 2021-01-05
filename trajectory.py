@@ -142,29 +142,30 @@ def optimTrajectory(path, distObs, trajDuration):
             inp = np.vstack((optim[:startOptim], x.reshape(OPTIMIZED_POINTS, 2), optim[startOptim+OPTIMIZED_POINTS:]))
             return cost(inp, globalPath, startOptim - (6 - OPTIMIZED_POINTS), distObs, delta_t)
         gradE = autograd.grad(E)
-
-        def nloptFun(x, grad):
-            if grad.size > 0:
-                g = gradE(x)
-                grad[:] = g.reshape(-1)
-            output = E(x)
-            return output
-        return nloptFun
+        return E, gradE
 
     while startOptim + OPTIMIZED_POINTS <= len(path) - 6:
-        opt = nlopt.opt(nlopt.LD_MMA, OPTIMIZED_POINTS * 2)
-        opt.set_min_objective(objFun(optim, path, startOptim, distObs, delta_t))
-        opt.set_upper_bounds(float('inf'))
-        opt.set_lower_bounds(-float('inf'))
-        opt.set_xtol_rel(1e-3)
-        # opt.set_maxeval(10)
+        f, df = objFun(optim, path, startOptim, distObs, delta_t)
+        x = optim[startOptim:startOptim+OPTIMIZED_POINTS].reshape(-1)
 
-        xInit = optim[startOptim:startOptim+OPTIMIZED_POINTS].reshape(-1)
-        print('init:', xInit.shape)
-        xOptim = opt.optimize(xInit)
-        print('optimized:', xOptim)
-        optim[startOptim:startOptim+OPTIMIZED_POINTS, :] = xOptim.reshape(-1, 2)
+        epochs = 50
+        beta = .9 # Momentum optimization param
+        lr = 1e-6
+        loss = np.zeros(epochs)
+        v = 0
+        for i in range(epochs):
+            loss[i] = f(x)
+            dx = df(x)
+            v = beta * v + (1 - beta) * dx
+            x = x - lr * v
+            print('[{}] loss: {} | grad: {}'.format(i, loss[i], dx))
+        optim[startOptim:startOptim+OPTIMIZED_POINTS, :] = x.reshape(-1, 2)
+
+        plt.plot(loss)
+        plt.ylim([0, loss[0] + 10])
+        plt.show()
         startOptim += 1
+    return optim
 
 
 def bsplineUpsample(path):
@@ -189,9 +190,11 @@ def main():
 
     distObs = euclideanDistanceTransform(grid_obs)
 
-    bsplinePts = optimTrajectory(path, distObs, trajDuration=10)
+    pathOptimized = optimTrajectory(path, distObs, trajDuration=10)
 
-    smoothed = bsplineUpsample(path)
+    print(path, pathOptimized)
+
+    smoothed = bsplineUpsample(pathOptimized)
 
     plot.display(start, goal, grid_obs, path, smoothed, hold=True)
     
