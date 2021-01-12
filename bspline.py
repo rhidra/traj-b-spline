@@ -37,3 +37,8 @@ def bsplineUpsample(path, upsampleRate=5):
             smoothed[i * upsampleRate + uidx, :] = bspline(u, p)
 
     return smoothed
+
+
+# Extract 6 points centered around idx according to the P_i = [pi-2, pi-1, pi, pi+1, pi+2, pi+3] vector from the paper
+def extractPts(pts, idx):
+    return pts[np.int(idx) - 2:np.int(idx) + 4]

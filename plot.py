@@ -1,7 +1,7 @@
 import numpy as np, matplotlib.pyplot as plt, matplotlib.patches as patches, matplotlib.collections as collections
 from utils import supercover, Node, lineOfSightNeighbors, lineOfSight, dist, phi
 from config import DISPLAY_DELAY
-from bspline import bsplineUpsample
+from bspline import bsplineUpsample, bsplineVel, bsplineAcc, bsplineJerk, bspline, extractPts
 from trajectory import OPTIMIZED_POINTS
 
 fig, (ax, ax2) = plt.subplots(nrows=2)
@@ -10,7 +10,7 @@ getPos = lambda x: x.pos if isinstance(x, Node) else x
 
 # originalPath: path coming from the global planner
 # smoothPath: path after trajectory optimization
-def display(start=None, goal=None, grid_obs=[], originalPath=[], optimPath=[], losses=[], currentOptimIdx=None, hold=False):
+def display(start=None, goal=None, grid_obs=[], originalPath=[], optimPath=[], losses=[], delta_t=None, currentOptimIdx=None, hold=False):
     ax.clear()
     ax.set_xlim(-0.5, grid_obs.shape[0])
     ax.set_ylim(-0.5, grid_obs.shape[0])
@@ -38,8 +38,15 @@ def display(start=None, goal=None, grid_obs=[], originalPath=[], optimPath=[], l
 
     if len(optimPath) > 0:
         smoothed = bsplineUpsample(optimPath)
-        ax.plot(optimPath[:, 0], optimPath[:, 1], 'o', color='magenta', markersize=5)
-        ax.plot(smoothed[:, 0], smoothed[:, 1], '-', color='magenta', linewidth=.8)
+        ax.plot(optimPath[:, 0], optimPath[:, 1], 'o', color='blue', markersize=5)
+        ax.plot(smoothed[:, 0], smoothed[:, 1], '-', color='blue', linewidth=.8)
+        if delta_t is not None:
+            for i in range(2, len(optimPath)-3):
+                p = bspline(0, extractPts(optimPath, i))
+                v = .5 * bsplineVel(0, extractPts(optimPath, i), delta_t)
+                # a = .3 * bsplineAcc(0, extractPts(optimPath, i), delta_t)
+                ax.arrow(p[0], p[1], v[0], v[1], width=.1, head_width=.5, color='orange', alpha=.3)
+                # ax.arrow(p[0], p[1], a[0], a[1], width=.01, head_width=.2, color='red', alpha=.6)
         if currentOptimIdx is not None:
             ax.plot(optimPath[currentOptimIdx:currentOptimIdx+OPTIMIZED_POINTS, 0], optimPath[currentOptimIdx:currentOptimIdx+OPTIMIZED_POINTS, 1], 'o', color='green', markersize=5)
 
@@ -47,7 +54,6 @@ def display(start=None, goal=None, grid_obs=[], originalPath=[], optimPath=[], l
         ax2.clear()
         for loss in losses:
             ax2.plot(loss)
-        # ax2.set_ylim([0, loss[0] + 10])
 
     if hold and isinstance(hold, bool):
         plt.show()
