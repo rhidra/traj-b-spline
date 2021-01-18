@@ -39,6 +39,54 @@ def bsplineUpsample(path, upsampleRate=5):
     return smoothed
 
 
+def bsplineVelUpsample(path, delta_t, upsampleRate=5):
+    smoothed = np.zeros((len(path) * upsampleRate, 2))
+
+    for i in range(len(path)):
+        p = np.array([path[np.clip(i + j - 2, 0, len(path)-1)] for j in range(6)]).reshape(6, 2)
+
+        for uidx, u in enumerate(np.linspace(0, 1, upsampleRate)):
+            smoothed[i * upsampleRate + uidx, :] = bsplineVel(u, p, delta_t)
+
+    return smoothed
+
+
+def bsplineAccUpsample(path, delta_t, upsampleRate=5):
+    smoothed = np.zeros((len(path) * upsampleRate, 2))
+
+    for i in range(len(path)):
+        p = np.array([path[np.clip(i + j - 2, 0, len(path)-1)] for j in range(6)]).reshape(6, 2)
+
+        for uidx, u in enumerate(np.linspace(0, 1, upsampleRate)):
+            smoothed[i * upsampleRate + uidx, :] = bsplineAcc(u, p, delta_t)
+
+    return smoothed
+
+
+def bsplineJerkUpsample(path, delta_t, upsampleRate=5):
+    smoothed = np.zeros((len(path) * upsampleRate, 2))
+
+    for i in range(len(path)):
+        p = np.array([path[np.clip(i + j - 2, 0, len(path)-1)] for j in range(6)]).reshape(6, 2)
+
+        for uidx, u in enumerate(np.linspace(0, 1, upsampleRate)):
+            smoothed[i * upsampleRate + uidx, :] = bsplineJerk(u, p, delta_t)
+
+    return smoothed
+
+
+def bsplineSnapUpsample(path, delta_t, upsampleRate=5):
+    smoothed = np.zeros((len(path) * upsampleRate, 2))
+
+    for i in range(len(path)):
+        p = np.array([path[np.clip(i + j - 2, 0, len(path)-1)] for j in range(6)]).reshape(6, 2)
+
+        for uidx, u in enumerate(np.linspace(0, 1, upsampleRate)):
+            smoothed[i * upsampleRate + uidx, :] = bsplineSnap(u, p, delta_t)
+
+    return smoothed
+
+
 # Extract 6 points centered around idx according to the P_i = [pi-2, pi-1, pi, pi+1, pi+2, pi+3] vector from the paper
 def extractPts(pts, idx):
     return pts[np.int(idx) - 2:np.int(idx) + 4]

@@ -1,4 +1,4 @@
-import math, sys, time, matplotlib.pyplot as plt, plot, nlopt, autograd.numpy as np, autograd
+import math, sys, time, matplotlib.pyplot as plt, plot, nlopt, autograd.numpy as np, autograd, scipy.optimize
 from phi_star import main as phi_star_gen
 from utils import dist, over_sampling, Node
 from bspline import M_6, bspline, bsplineAcc, bsplineVel, bsplineJerk, bsplineSnap, bsplineUpsample, extractPts
@@ -6,7 +6,7 @@ from config import *
 
 
 # Number of points being optimized at the same time
-OPTIMIZED_POINTS = 3
+OPTIMIZED_POINTS = 6
 
 # Teta in the distance function in the paper
 OBSTACLE_DISTANCE_THRESHOLD = 5
@@ -15,8 +15,9 @@ OBSTACLE_DISTANCE_THRESHOLD = 5
 INITIAL_OPTIM_OFFSET = 6
 
 # Objective function parameters
-lambda_p, lambda_v = .06, .02 # Endpoint cost position and velocity weights
-lambda_c = 100 # Collision cost weight
+lambda_p, lambda_v = .005, .001 # Endpoint cost position and velocity weights
+lambda_c = 7 # Collision cost weight
+lambda_q2, lambda_q3, lambda_q4 = .1e-1, .1e-2, .1e-3 # Quadratic derivative cost weight
 
 # For the quadratic cost computation (E_q)
 Q_2 = lambda dt: np.array([[0]*6,[0]*6, [0,0,4,6,8,10], [0,0,6,12,18,24], [0,0,8,18,28.8,40], [0,0,10,24,40,400/7]]) / (dt*dt*dt)
@@ -51,15 +52,13 @@ def euclideanDistanceTransform(grid_obs):
 # Cost function for a quintic B-spline starting at startIdx
 # pts and globalPts should contain all the points from the optimized trajectory and global path
 def cost(pts, globalPts, startIdx, distObs, delta_t):
-    print('startIdx', startIdx)
-
     # Endpoint cost
     posDiff = bspline(0, extractPts(pts, startIdx + 5)) - globalPts[startIdx + 5]
-    velDiff = bsplineVel(0, extractPts(pts, startIdx + 5), delta_t) - np.array([1, 1]) # Hardcoded expected velocity
+    velDiff = bsplineVel(0, extractPts(pts, startIdx + 5), delta_t) - bsplineVel(0, extractPts(globalPts, startIdx + 5), delta_t)
     E_ep = lambda_p * np.dot(posDiff, posDiff) + lambda_v * np.dot(velDiff, velDiff)
 
     # Collision cost
-    u = np.linspace(0, 1, 10)
+    u = np.linspace(0, 1, 5)
     samples = np.vstack((np.repeat(np.arange(6), len(u)), np.tile(u, 6)))
     
     def computeDist(sample):
@@ -77,7 +76,6 @@ def cost(pts, globalPts, startIdx, distObs, delta_t):
     E_c = lambda_c * np.sum(np.dot(distances, velocities)) / (len(u) * 6)
 
     # Squared derivative cost
-    lambda_q2, lambda_q3, lambda_q4 = .1e-3, .1e-3, .1e-3
     q2, q3, q4 = Q_2(delta_t), Q_3(delta_t), Q_4(delta_t)
     E_q = 0
     for i in range(6):
@@ -86,8 +84,8 @@ def cost(pts, globalPts, startIdx, distObs, delta_t):
         E_q = E_q + np.sum(lambda_q2 * np.dot(np.dot(B, q2), A) + lambda_q3 * np.dot(np.dot(B, q3), A) + lambda_q4 * np.dot(np.dot(B, q4), A))
     
     # Derivative limit cost
-    max_vel, max_acc, max_jerk, max_snap = np.array([1000, 1000]), np.array([1000, 1000]), np.array([1000, 1000]), np.array([10000, 10000])
-    u = np.linspace(0, 1, 10)
+    max_vel, max_acc, max_jerk, max_snap = np.array([1000, 1000]), np.array([1000, 1000]), np.array([1e10, 1e10]), np.array([1e10, 1e10])
+    u = np.linspace(0, 1, 5)
     samples = np.vstack((np.repeat(np.arange(6), len(u)), np.tile(u, 6)))
     def derivativeCost(pFunc, max_p, delta_t):
         def f(sample):
@@ -103,23 +101,24 @@ def cost(pts, globalPts, startIdx, distObs, delta_t):
         E_l = E_l + derivativeCost(bsplineAcc, max_acc, delta_t)(sample)
         E_l = E_l + derivativeCost(bsplineJerk, max_jerk, delta_t)(sample)
         E_l = E_l + derivativeCost(bsplineSnap, max_snap, delta_t)(sample)
+    E_l = E_l / (len(u) * 6)
 
     # Total cost
     E = E_ep + E_c + E_q + E_l
 
-    if not isinstance(E_ep, autograd.numpy.numpy_boxes.ArrayBox):
-        print('{} | {} | {} | {} => {}'.format(E_ep, E_c, E_q, E_l, E))
+    # if not isinstance(E_ep, autograd.numpy.numpy_boxes.ArrayBox):
+    #     print('[{}] {} | {} | {} | {} => {}'.format(startIdx, E_ep, E_c, E_q, E_l, E))
     return E
 
 
 def optimTrajectory(path, distObs, grid_obs, trajDuration):
-    path = np.pad(path, ((0, 6), (0, 0)), mode='edge')
+    path = np.pad(path, ((6, 6), (0, 0)), mode='edge')
     optim = np.copy(path)
     delta_t = trajDuration / len(path)
     # For each iteration, we optimize between [startOptim, startOptim + OPTIMIZED_POINTS]
     startOptim = INITIAL_OPTIM_OFFSET
 
-    # NLopt configuration
+    # Optimization configuration
     def objFun(optim, globalPath, startOptim, distObs, delta_t):
         def E(x):
             inp = np.vstack((optim[:startOptim], x.reshape(OPTIMIZED_POINTS, 2), optim[startOptim+OPTIMIZED_POINTS:]))
@@ -132,28 +131,21 @@ def optimTrajectory(path, distObs, grid_obs, trajDuration):
     losses = np.zeros((len(path) - 6 - startOptim - OPTIMIZED_POINTS, epochs))
     while startOptim + OPTIMIZED_POINTS <= len(path) - 6:
         f, df = objFun(optim, path, startOptim, distObs, delta_t)
-        x = optim[startOptim:startOptim+OPTIMIZED_POINTS].reshape(-1)
+        x0 = optim[startOptim:startOptim+OPTIMIZED_POINTS].reshape(-1)
 
-        beta = .9 # Momentum optimization param
-        lr = 1.5e-1
-        v = 0
-        prev = np.zeros(6)
-        prev[:] = x
-        for i in range(epochs):
-            print()
-            losses[startOptim-INITIAL_OPTIM_OFFSET, i] = f(x)
-            dx = df(x)
-            v = beta * v + (1 - beta) * dx
-            x = x - lr * v
-            print('[{}] loss: {} | diff: {} | grad: {}'.format(i, losses[startOptim-INITIAL_OPTIM_OFFSET, i], np.linalg.norm(prev - x), dx))
-            if i%3==0 or True:
-                optim[startOptim:startOptim+OPTIMIZED_POINTS, :] = x.reshape(-1, 2)
-                plot.display(None, None, grid_obs, path, optim, losses, delta_t=delta_t, currentOptimIdx=startOptim, hold=.1)
-            if np.linalg.norm(prev - x) < .001 and False:
-                print('Reached !')
-                break
-            prev[:] = x
-        optim[startOptim:startOptim+OPTIMIZED_POINTS, :] = x.reshape(-1, 2)
+        def cb(xk):
+            optim[startOptim:startOptim+OPTIMIZED_POINTS, :] = xk.reshape(-1, 2)
+            g = df(xk)
+            print('grad norm', np.linalg.norm(g))
+            plot.display(None, None, grid_obs, path, optim, delta_t=delta_t, currentOptimIdx=startOptim, grad=g.reshape(-1, 2), hold=.01)
+
+        result = scipy.optimize.minimize(f, x0, method='BFGS', jac=df, callback=cb, options={'gtol': 1e-4})
+        
+        print('*'*30)
+        print('Optimization result ({} steps):'.format(result.nit), result.success, result.message)
+        print('*'*30)
+        optim[startOptim:startOptim+OPTIMIZED_POINTS, :] = result.x.reshape(-1, 2)
+        plot.display(None, None, grid_obs, path, optim, delta_t=delta_t, currentOptimIdx=startOptim, hold=.1)
         startOptim += 1
     return optim
 

@@ -1,7 +1,7 @@
 import numpy as np, matplotlib.pyplot as plt, matplotlib.patches as patches, matplotlib.collections as collections
 from utils import supercover, Node, lineOfSightNeighbors, lineOfSight, dist, phi
 from config import DISPLAY_DELAY
-from bspline import bsplineUpsample, bsplineVel, bsplineAcc, bsplineJerk, bspline, extractPts
+from bspline import bsplineUpsample, bsplineVel, bsplineAcc, bsplineJerk, bspline, extractPts, bsplineAccUpsample, bsplineVelUpsample, bsplineSnapUpsample, bsplineJerkUpsample
 from trajectory import OPTIMIZED_POINTS
 
 fig, (ax, ax2) = plt.subplots(nrows=2)
@@ -10,13 +10,15 @@ getPos = lambda x: x.pos if isinstance(x, Node) else x
 
 # originalPath: path coming from the global planner
 # smoothPath: path after trajectory optimization
-def display(start=None, goal=None, grid_obs=[], originalPath=[], optimPath=[], losses=[], delta_t=None, currentOptimIdx=None, hold=False):
+def display(start=None, goal=None, grid_obs=[], originalPath=[], optimPath=[], losses=[], delta_t=None, currentOptimIdx=None, grad=[], hold=False):
+    print('plotting...')
     ax.clear()
     ax.set_xlim(-0.5, grid_obs.shape[0])
     ax.set_ylim(-0.5, grid_obs.shape[0])
     
     ax.set_title('Trajectory')
-    ax2.set_title('Loss function')
+
+    ax2.clear()
 
     obs = []
     x, y = np.mgrid[0:grid_obs.shape[0], 0:grid_obs.shape[1]]
@@ -49,11 +51,20 @@ def display(start=None, goal=None, grid_obs=[], originalPath=[], optimPath=[], l
                 # ax.arrow(p[0], p[1], a[0], a[1], width=.01, head_width=.2, color='red', alpha=.6)
         if currentOptimIdx is not None:
             ax.plot(optimPath[currentOptimIdx:currentOptimIdx+OPTIMIZED_POINTS, 0], optimPath[currentOptimIdx:currentOptimIdx+OPTIMIZED_POINTS, 1], 'o', color='green', markersize=5)
-
-    if len(losses) > 0:
-        ax2.clear()
-        for loss in losses:
-            ax2.plot(loss)
+        
+        velCurve = np.linalg.norm(bsplineVelUpsample(optimPath, delta_t), axis=1)
+        accCurve = np.linalg.norm(bsplineAccUpsample(optimPath, delta_t), axis=1)
+        jerkCurve = np.linalg.norm(bsplineJerkUpsample(optimPath, delta_t), axis=1)
+        snapCurve = np.linalg.norm(bsplineSnapUpsample(optimPath, delta_t), axis=1)
+        ax2.plot(velCurve/np.max(velCurve), color='orange', label='Velocity')
+        ax2.plot(accCurve/np.max(accCurve), color='red', label='Acceleration')
+        ax2.plot(jerkCurve/np.max(jerkCurve), color='cyan', label='Jerk')
+        ax2.plot(snapCurve/np.max(snapCurve), color='blue', label='Snap')
+        ax2.legend()
+    
+    if currentOptimIdx and len(grad) > 0:
+        for i, g in enumerate(grad):
+            ax.arrow(optimPath[currentOptimIdx+i, 0], optimPath[currentOptimIdx+i, 1], -g[0], -g[1], width=.05, head_width=.2, color='magenta', alpha=.8)
 
     if hold and isinstance(hold, bool):
         plt.show()
